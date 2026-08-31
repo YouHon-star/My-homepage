@@ -653,6 +653,7 @@ button { font-family: inherit; }
 }
 @media (max-width: 640px) {
   .menu a { display: none; }
+  .menu.open a { display: flex; }
   .menu-btn { display: grid; }
   .main { padding-top: 96px; }
   .hero-card { padding: 30px 24px; }

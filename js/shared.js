@@ -276,6 +276,15 @@ const Shared = (() => {
     }
   }
 
+  function initMenuBtn() {
+    const menuBtn = $("#menuBtn");
+    const menu = $(".menu");
+    if (!menuBtn || !menu) return;
+    menuBtn.addEventListener("click", () => {
+      menu.classList.toggle("open");
+    });
+  }
+
   /* ---------- Live2D 初始化（只执行一次） ---------- */
   let live2dApp = null;
   let live2dModel = null;
@@ -377,6 +386,7 @@ const Shared = (() => {
     initParticles();
     initMascotMessages();
     initMascotToggle();
+    initMenuBtn();
     initLive2D();
     observeReveals();
     // 兜底：5 秒后如果猫 emoji 还在显示，强制隐藏
