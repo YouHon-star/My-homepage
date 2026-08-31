@@ -191,7 +191,7 @@ button { font-family: inherit; }
 .logo-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(255,92,138,.22); animation: pulseDot 2s infinite; }
 @keyframes pulseDot { 0%,100% { box-shadow: 0 0 0 4px rgba(255,92,138,.22);} 50% { box-shadow: 0 0 0 7px rgba(255,92,138,0);} }
 .logo-jp { font-size: .85rem; color: var(--muted); }
-.menu { display: flex; align-items: center; gap: 12px; }
+.menu { display: flex; align-items: center; gap: 12px; position: relative; }
 .menu a {
   padding: 10px 18px; border-radius: 12px;
   font-weight: 500; font-size: .95rem; color: var(--muted);
@@ -199,6 +199,15 @@ button { font-family: inherit; }
 }
 .menu a:hover { color: var(--text); background: var(--glass); transform: translateY(-2px); }
 .menu a.active { color: var(--accent); background: var(--glass); }
+
+/* 移动端下拉菜单 */
+@media (max-width: 640px) {
+  .menu { position: absolute; top: 100%; left: 0; right: 0; background: var(--glass-strong); backdrop-filter: blur(20px); border-radius: 0 0 var(--radius) var(--radius); padding: 8px; box-shadow: var(--shadow); display: none; flex-direction: column; gap: 4px; }
+  .menu.open { display: flex; }
+  .menu a { width: 100%; text-align: left; }
+  .menu a:hover { transform: none; background: var(--glass); }
+  .menu a.active { background: var(--glass); color: var(--accent); }
+}
 .theme-toggle, .menu-btn {
   display: grid; place-items: center;
   width: 40px; height: 40px; border-radius: 12px;
@@ -655,8 +664,6 @@ button { font-family: inherit; }
 @media (max-width: 640px) {
   .logo { font-size: 1.3rem; }
   .logo-jp { font-size: .75rem; }
-  .menu a { display: none; }
-  .menu.open a { display: flex; }
   .menu-btn { display: grid; width: 36px; height: 36px; font-size: .95rem; }
   .theme-toggle { width: 36px; height: 36px; }
   .theme-toggle svg { width: 16px; height: 16px; }
@@ -670,6 +677,7 @@ button { font-family: inherit; }
   .log-form-row { flex-direction: column; align-items: stretch; }
   .mascot-wrap { right: 0; }
   .mascot-box { width: 170px; height: 224px; }
+}
 }
 
 /* ================= 博客布局 ================= */
