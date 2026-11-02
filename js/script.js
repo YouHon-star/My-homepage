@@ -18,14 +18,6 @@ const HomeApp = (() => {
     ]
   };
 
-  const playlist = [
-    { title: "リリィ", artist: "倚水/吐息.", src: "music/リリィ(feat. 倚水).mp3", cover: "music-Picture/吐息.jpg", color: ["#ff5c8a", "#9b6bff"] },
-    { title: "你有多久都没看过蓝天", artist: "橘猫烧鲷鱼.", src: "music/你有多久都没看过蓝天.mp3", cover: "music-Picture/你有多久都没看过蓝天.jpg", color: ["#38bdf8", "#818cf8"] },
-    { title: "ヰ世界の宝石譚", artist: "V.A.", src: "music/宝石谭.mp3?v=2", cover: "music-Picture/宝石谭.jpg", color: ["#14b8a6", "#8b5cf6"] },
-    { title: "第六感", artist: "Reol", src: "music/第六感.mp3", cover: "music-Picture/第六感.jpg", color: ["#9b6bff", "#ff5c8a"] },
-    { title: "もうどくちゅうい", artist: "猛毒注意", src: "music/もうどくちゅうい.mp3", cover: "music-Picture/猛毒注意.jpg", color: ["#b89af7", "#fea9c1"] }
-  ];
-
   const socials = [
     { icon: "𝕏", label: "推特", href: "https://x.com/YoHon11638", img: "piv/X.png", type: "link" },
     { icon: "🐧", label: "QQ", copy: "1923497173", img: "piv/qq.png", type: "copy" },
@@ -35,10 +27,6 @@ const HomeApp = (() => {
   ];
 
   const typedWords = ["懒懒", "失眠", "穷穷", "无聊"];
-
-  /* ---------- 清理引用 ---------- */
-  let audioEl = null;
-  let rafId = null;
 
   /* ---------- 社交链接渲染 & 复制 ---------- */
   function socialIconHtml(s) {
@@ -159,137 +147,35 @@ const HomeApp = (() => {
     type();
   }
 
-  /* ---------- 音乐播放器 ---------- */
-  function initMusicPlayer() {
-    const mpPlay = $("#mpPlay");
-    const mpNext = $("#mpNext");
-    const mpPrev = $("#mpPrev");
-    const mpBar = $("#mpBar");
-    const mpFill = $("#mpFill");
-    const mpTitle = $("#mpTitle");
-    const mpArtist = $("#mpArtist");
-    const mpArt = $("#mpArt");
-    const mpArtImg = $("#mpArtImg");
-    const mpEq = $("#mpEq");
-    const mpCur = $("#mpCur");
-    const mpDur = $("#mpDur");
-    const mpPlayer = $("#musicPlayer");
-
-    if (!mpPlay) return;
-
-    audioEl = new Audio();
-    audioEl.preload = "metadata";
-    let current = 0;
-    let playing = false;
-
-    function fmtTime(s) {
-      if (!isFinite(s)) s = 0;
-      s = Math.max(0, Math.floor(s));
-      const m = Math.floor(s / 60);
-      const sec = s % 60;
-      return `${m}:${String(sec).padStart(2, "0")}`;
-    }
-
-    function loadTrack(i) {
-      current = i;
-      const song = playlist[current];
-      if (mpTitle) mpTitle.textContent = song.title;
-      if (mpArtist) mpArtist.textContent = song.artist;
-      if (mpArtImg) mpArtImg.src = encodeURI(song.cover);
-      if (mpArt) mpArt.style.background = `linear-gradient(135deg, ${song.color[0]}, ${song.color[1]})`;
-      if (mpCur) mpCur.textContent = "0:00";
-      if (mpDur) mpDur.textContent = "--:--";
-      if (mpFill) mpFill.style.width = "0%";
-      audioEl.src = encodeURI(song.src);
-    }
-
-    function updateProgress() {
-      if (mpCur) mpCur.textContent = fmtTime(audioEl.currentTime);
-      const d = audioEl.duration || 0;
-      if (d > 0 && mpFill) mpFill.style.width = (audioEl.currentTime / d) * 100 + "%";
-    }
-
-    function progressLoop() {
-      updateProgress();
-      rafId = requestAnimationFrame(progressLoop);
-    }
-
-    function setPlaying(v) {
-      playing = v;
-      mpPlay.textContent = v ? "⏸" : "▶";
-      if (mpPlayer) mpPlayer.classList.toggle("playing", v);
-      if (mpEq) mpEq.classList.toggle("playing", v);
-    }
-
-    function play() {
-      setPlaying(true);
-      audioEl.play().catch(() => setPlaying(false));
-      cancelAnimationFrame(rafId);
-      progressLoop();
-    }
-    function pause() {
-      setPlaying(false);
-      audioEl.pause();
-      cancelAnimationFrame(rafId);
-      updateProgress();
-    }
-    function toggle() { playing ? pause() : play(); }
-    function next() {
-      loadTrack((current + 1) % playlist.length);
-      if (playing) audioEl.play().catch(() => {});
-    }
-    function prev() {
-      loadTrack((current - 1 + playlist.length) % playlist.length);
-      if (playing) audioEl.play().catch(() => {});
-    }
-
-    audioEl.addEventListener("loadedmetadata", () => {
-      if (mpDur) mpDur.textContent = fmtTime(audioEl.duration);
-      updateProgress();
-    });
-    audioEl.addEventListener("ended", next);
-    audioEl.addEventListener("error", () => { if (playing) next(); });
-
-    mpPlay.addEventListener("click", toggle);
-    if (mpNext) mpNext.addEventListener("click", next);
-    if (mpPrev) mpPrev.addEventListener("click", prev);
-    if (mpBar) {
-      mpBar.addEventListener("click", e => {
-        const rect = mpBar.getBoundingClientRect();
-        const ratio = (e.clientX - rect.left) / rect.width;
-        if (audioEl.duration) {
-          audioEl.currentTime = ratio * audioEl.duration;
-          updateProgress();
-        }
-      });
-    }
-
-    loadTrack(0);
-  }
-
-  /* ---------- 留言板 ---------- */
+  /* ---------- 留言板（2026-10-25：改为服务器存储，所有人可见）---------- */
   function initMessageBoard() {
     const messageForm = $("#messageForm");
     const messageInput = $("#messageInput");
     const messageList = $("#messageList");
-    const MSG_KEY = "anonymous_messages";
+    const MSG_KEY = "anonymous_messages";   // 只作离线兜底，不再是数据源
+    const MSG_API = "/api/messages";
 
     if (!messageForm) return;
 
-    function loadMessages() {
-      try { return JSON.parse(localStorage.getItem(MSG_KEY)) || []; } catch (e) { return []; }
-    }
-    function saveMessages(list) {
+    function cacheMessages(list) {
       try { localStorage.setItem(MSG_KEY, JSON.stringify(list)); } catch (e) {}
     }
-    function renderMessages() {
-      const list = loadMessages();
+    function cachedMessages() {
+      try { return JSON.parse(localStorage.getItem(MSG_KEY)) || []; } catch (e) { return []; }
+    }
+
+    function paint(list, note) {
       if (!messageList) return;
-      if (!list.length) {
-        messageList.innerHTML = '<p class="message-empty">还没有留言，快来抢沙发～</p>';
+      const noteHtml = note
+        ? '<p class="message-empty">' + Shared.escapeHtml(note) + "</p>"
+        : "";
+      if (!list || !list.length) {
+        messageList.innerHTML = noteHtml ||
+          '<p class="message-empty">还没有留言，快来抢沙发～</p>';
         return;
       }
-      messageList.innerHTML = list.slice().reverse().map(m => `
+      // 服务端已按「新的在前」返回，这里**不要再 reverse**，否则会翻回旧的在前
+      messageList.innerHTML = noteHtml + list.map(m => `
         <div class="message-item">
           <div class="message-content">${Shared.escapeHtml(m.text)}</div>
           <div class="message-time">${Shared.escapeHtml(m.time)}</div>
@@ -297,15 +183,60 @@ const HomeApp = (() => {
       `).join("");
     }
 
-    messageForm.addEventListener("submit", e => {
+    async function fetchMessages() {
+      const res = await fetch(MSG_API + "?limit=50", { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      const list = Array.isArray(data.messages)
+        ? data.messages
+            .filter(m => m && typeof m.text === "string")
+            .map(m => ({ text: m.text, time: m.time || "" }))
+        : [];
+      cacheMessages(list);
+      return list;
+    }
+
+    async function renderMessages() {
+      try {
+        paint(await fetchMessages());
+      } catch (e) {
+        const local = cachedMessages();
+        paint(local, local.length ? "" : "留言板暂时连不上服务器，稍后再刷新试试～");
+      }
+    }
+
+    messageForm.addEventListener("submit", async e => {
       e.preventDefault();
       const text = messageInput.value.trim();
       if (!text) return;
-      const list = loadMessages();
-      list.push({ text, time: new Date().toLocaleString("zh-CN") });
-      saveMessages(list);
-      messageInput.value = "";
-      renderMessages();
+      const btn = messageForm.querySelector('button[type="submit"]');
+      if (btn) { btn.disabled = true; btn.textContent = "发送中…"; }
+      try {
+        const res = await fetch(MSG_API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text })
+        });
+        if (!res.ok) {
+          let tip = "发送失败（" + res.status + "）";
+          if (res.status === 429) tip = "发太快啦，歇一分钟再发～";
+          else if (res.status === 413) tip = "留言太长了，200 字以内～";
+          else if (res.status === 400) tip = "这条留言发不出去，换个说法试试～";
+          paint(cachedMessages(), tip);
+          return;
+        }
+        messageInput.value = "";
+        await renderMessages();
+      } catch (err) {
+        // 服务器连不上：先存本机，别让用户白打字
+        const local = cachedMessages();
+        local.push({ text, time: new Date().toLocaleString("zh-CN") });
+        cacheMessages(local);
+        paint(local, "服务器暂时连不上，这条只存在你的浏览器里");
+        messageInput.value = "";
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "发送留言"; }
+      }
     });
 
     renderMessages();
@@ -316,14 +247,17 @@ const HomeApp = (() => {
     render();
     initClock();
     initTyped();
-    initMusicPlayer();
     initMessageBoard();
+    // 音乐播放器从首页模块中抽离，改为常驻模块（跨页续播）。
+    // 这里只负责「挂载视图」；音频实体由 MusicPlayer 持有，不随本模块销毁。
+    if (typeof MusicPlayer !== "undefined") MusicPlayer.mount();
   }
 
   function destroy() {
-    cancelAnimationFrame(rafId);
     clearInterval(clockInterval);
-    if (audioEl) { audioEl.pause(); audioEl.src = ""; audioEl = null; }
+    clearTimeout(typeTimer);
+    // 只卸载播放器视图（停进度条刷新），**不碰音频** —— 跳转后音乐继续播放
+    if (typeof MusicPlayer !== "undefined") MusicPlayer.unmount();
   }
 
   return { init, destroy };

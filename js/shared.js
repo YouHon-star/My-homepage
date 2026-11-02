@@ -153,6 +153,29 @@ const Shared = (() => {
     backTop.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
   }
 
+  /* ---------- 移动端菜单（☰ 展开/收起） ---------- */
+  const menuBtn = $("#menuBtn");
+  function closeMenu() { if (nav) nav.classList.remove("menu-open"); }
+  function toggleMenu(e) {
+    if (e) e.stopPropagation();
+    if (nav) nav.classList.toggle("menu-open");
+  }
+  if (menuBtn) menuBtn.addEventListener("click", toggleMenu);
+  if (nav) {
+    // 点选菜单里的链接后自动收起（含 PJAX 跳转）
+    nav.addEventListener("click", (e) => {
+      if (e.target.closest("a") && nav.classList.contains("menu-open")) closeMenu();
+    });
+  }
+  // 点击页面其它区域收起
+  document.addEventListener("click", (e) => {
+    if (nav && nav.classList.contains("menu-open") && !nav.contains(e.target)) closeMenu();
+  });
+  // 视口变宽（回到桌面布局）时重置
+  window.addEventListener("resize", () => {
+    if (window.innerWidth > 640) closeMenu();
+  });
+
   /* ---------- 页脚 ---------- */
   const badges = ["HTML", "CSS", "JavaScript", "Python"];
   const badgesEl = $("#footerBadges");
@@ -160,16 +183,22 @@ const Shared = (() => {
   const yearEl = $("#year");
   if (yearEl) yearEl.textContent = new Date().getFullYear();
 
-  /* ---------- 运行时间 ---------- */
-  const startTime = Date.now();
+  /* ---------- 运行时间（自建站日累计） ---------- */
+  // 建站时间：改这一行就能调整基准（东八区）
+  const SITE_START = new Date("2026-08-31T10:00:00+08:00").getTime();
   const uptimeEl = $("#uptime");
   function fmt(ms) {
-    const s = Math.floor(ms / 1000);
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
     const pad = n => String(n).padStart(2, "0");
-    return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+    return d > 0 ? `${d}天 ${pad(h)}:${pad(m)}:${pad(sec)}` : `${pad(h)}:${pad(m)}:${pad(sec)}`;
   }
-  if (uptimeEl) setInterval(() => { uptimeEl.textContent = fmt(Date.now() - startTime); }, 1000);
+  if (uptimeEl) {
+    const tick = () => { uptimeEl.textContent = fmt(Date.now() - SITE_START); };
+    tick();
+    setInterval(tick, 1000);
+  }
 
   /* ---------- 浮现动画 observer（全局复用） ---------- */
   const revealObserver = new IntersectionObserver(entries => {
@@ -276,15 +305,6 @@ const Shared = (() => {
     }
   }
 
-  function initMenuBtn() {
-    const menuBtn = $("#menuBtn");
-    const menu = $(".menu");
-    if (!menuBtn || !menu) return;
-    menuBtn.addEventListener("click", () => {
-      menu.classList.toggle("open");
-    });
-  }
-
   /* ---------- Live2D 初始化（只执行一次） ---------- */
   let live2dApp = null;
   let live2dModel = null;
@@ -306,7 +326,7 @@ const Shared = (() => {
       console.log("[Live2D] 模型路径:", modelPath);
       live2dModel = await Promise.race([
         PIXI.live2d.Live2DModel.from(modelPath),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("模型加载超时")), 12000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error("模型加载超时")), 60000))
       ]);
 
       try { live2dModel.internalModel.coreModel.setParameterValueById("Param", 1, 1); } catch (e) {}
@@ -323,8 +343,11 @@ const Shared = (() => {
       live2dApp = new PIXI.Application({
         view: live2dCanvas, width: w, height: h,
         transparent: true, autoStart: true, antialias: true,
-        resolution: window.devicePixelRatio || 1
+        resolution: Math.max(2, window.devicePixelRatio || 1)
       });
+
+      // 提升裁剪 mask 缓冲分辨率（默认 256px 太低导致裙摆等 clip 区域边缘锯齿）
+      try { live2dModel.internalModel.renderer.setClippingMaskBufferSize(1024); } catch (e) {}
 
       live2dApp.stage.addChild(live2dModel);
 
@@ -386,7 +409,6 @@ const Shared = (() => {
     initParticles();
     initMascotMessages();
     initMascotToggle();
-    initMenuBtn();
     initLive2D();
     observeReveals();
     // 兜底：5 秒后如果猫 emoji 还在显示，强制隐藏

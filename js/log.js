@@ -1,9 +1,151 @@
 /* ============ log.js — 博客 & 友链模块 ============ */
+
+/* ---------- ServerStore：博客/友链服务器存储同步层 ----------
+ * 数据源策略（解决"密钥发布的内容访客看不到"）：
+ *   1. 页面加载时 GET /api/site_data，服务器有数据 → 以服务器为权威覆盖本地缓存
+ *   2. 服务器为空（首次部署）且本地有旧数据 → 自动上传迁移到服务器
+ *   3. 保存时写 localStorage + POST 到服务器
+ */
+const ServerStore = (() => {
+  const API = "/api/site_data";
+  const KEY = "yohon0721"; // 与 shared.js 的 EDIT_KEY 一致
+  let ready = false;
+  let syncCallbacks = [];
+
+  function getLocal(key) {
+    try { return JSON.parse(localStorage.getItem(key)) || []; } catch (e) { return []; }
+  }
+  function setLocal(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {}
+  }
+  async function pushAll() {
+    let lastErr = null;
+    // 最多 3 次（1.5s / 3s 退避），避免网络抖动直接丢文章
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const resp = await fetch(API + "?key=" + encodeURIComponent(KEY), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ posts: getLocal("site_posts"), links: getLocal("site_links") })
+        });
+        // 400/403/5xx 也要当失败处理（此前不检查 resp.ok，长文 400 被静默吞掉导致丢文章）
+        if (!resp.ok) throw new Error("服务器返回 " + resp.status);
+        return true;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 1500));
+      }
+    }
+    console.warn("[ServerStore] push failed", lastErr);
+    try {
+      Shared.showToast("⚠️ 保存到服务器失败（" + ((lastErr && lastErr.message) || "网络错误") + "），内容已保存在本机浏览器，请稍后重试");
+    } catch (err) {
+      alert("⚠️ 保存到服务器失败，内容已保存在本机浏览器，请稍后重试");
+    }
+    return false;
+  }
+
+  /* ---------- 草稿（未发布内容）异地保存 ----------
+   * 独立接口 /api/draft，读写都要 key，访客看不到草稿。
+   * 目的：写到一半关掉页面/换设备也不丢。 */
+  const DRAFT_API = "/api/draft";
+  let draftSeq = 0;
+
+  async function pushDraft(draft) {
+    const seq = ++draftSeq;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const resp = await fetch(DRAFT_API + "?key=" + encodeURIComponent(KEY), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(draft),
+          keepalive: true
+        });
+        if (resp.ok) return seq;
+      } catch (e) { /* 网络问题，重试一次 */ }
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1200));
+    }
+    return -1;
+  }
+
+  async function loadDraft() {
+    try {
+      const resp = await fetch(DRAFT_API + "?key=" + encodeURIComponent(KEY), { cache: "no-store" });
+      if (!resp.ok) return null;
+      const d = await resp.json();
+      if (d && (d.content || d.title)) return d;
+      return null;
+    } catch (e) { return null; }
+  }
+
+  async function clearDraft() {
+    try {
+      await fetch(DRAFT_API + "?key=" + encodeURIComponent(KEY), { method: "DELETE", keepalive: true });
+      return true;
+    } catch (e) { return false; }
+  }
+  function onSync(cb) {
+    if (ready) { try { cb(); } catch (e) {} }
+    else syncCallbacks.push(cb);
+  }
+  async function syncAll() {
+    if (ready) return;
+    ready = true;
+    let server = null;
+    try {
+      const resp = await fetch(API, { cache: "no-store" });
+      if (resp.ok) server = await resp.json();
+    } catch (e) { /* 服务器不可达则保持本地模式 */ }
+    if (server && Array.isArray(server.posts) && Array.isArray(server.links)) {
+      const sPosts = server.posts;
+      const sLinks = server.links;
+      const lPosts = getLocal("site_posts");
+      const lLinks = getLocal("site_links");
+
+      if (sPosts.length || sLinks.length) {
+        // 服务器有数据 → 服务器权威，覆盖本地缓存（所有访客看到一致内容）
+        setLocal("site_posts", sPosts);
+        setLocal("site_links", sLinks);
+      } else if (lPosts.length || lLinks.length) {
+        // 服务器空但本地有旧数据（作者此前用 localStorage 发布的）→ 上传迁移
+        await pushAll();
+      }
+    }
+    // 同步完成，通知注册的刷新回调（如 BlogApp/LinksApp 重渲染）
+    const cbs = syncCallbacks;
+    syncCallbacks = [];
+    cbs.forEach(cb => { try { cb(); } catch (e) {} });
+  }
+  return { syncAll, pushAll, onSync, pushDraft, loadDraft, clearDraft };
+})();
+
+// 预热：页面一加载就同步一次（幂等，后续 init 直接命中缓存）
+ServerStore.syncAll();
+
 const BlogApp = (() => {
   const $ = (s, c = document) => c.querySelector(s);
 
   /* ---------- 数据 ---------- */
   const POST_KEY = "site_posts";
+
+  /* ---------- 分类：一篇文章可挂多个分类，输入时用空格隔开 ---------- */
+  // 兼容旧数据：老文章只有一个分类字符串，split 后依旧是 1 个
+  function splitCategories(value) {
+    let raw = value;
+    if (Array.isArray(raw)) raw = raw.join(" ");
+    const out = [];
+    String(raw == null ? "" : raw)
+      .split(/[\s,，、/|]+/)                 // 空格 / 逗号 / 顿号 / 斜杠都当分隔
+      .forEach(s => {
+        const t = s.trim();
+        if (t && out.indexOf(t) === -1) out.push(t);   // 去重
+      });
+    return out;
+  }
+  function categoryText(value) {
+    const cats = splitCategories(value);
+    return cats.length ? cats.join(" ") : "其他";
+  }
 
   function loadPosts() {
     try {
@@ -32,7 +174,7 @@ const BlogApp = (() => {
         content: p.content || "",
         mood: p.mood || "✨",
         tags: Array.isArray(p.tags) ? p.tags : (typeof p.tags === "string" ? p.tags.split(/[,，]/).map(t => t.trim()).filter(Boolean) : []),
-        category: p.category || "其他",
+        category: categoryText(p.category),
         date: p.date || "",
         wordCount: p.wordCount || Shared.countWords(p.content || ""),
         readingTime: p.readingTime || Math.max(1, Math.ceil(Shared.countWords(p.content || "") / 300))
@@ -41,6 +183,7 @@ const BlogApp = (() => {
   }
   function savePosts(list) {
     try { localStorage.setItem(POST_KEY, JSON.stringify(list)); } catch (e) {}
+    return ServerStore.pushAll(); // 同步到服务器（返回 Promise<boolean>）
   }
 
   /* ---------- 渲染状态 ---------- */
@@ -68,7 +211,9 @@ const BlogApp = (() => {
   }
   function getAllCategories(posts) {
     const map = {};
-    posts.forEach(p => { if (p.category) map[p.category] = (map[p.category] || 0) + 1; });
+    posts.forEach(p => {
+      splitCategories(p.category).forEach(c => { map[c] = (map[c] || 0) + 1; });
+    });
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
   }
 
@@ -160,7 +305,7 @@ const BlogApp = (() => {
       result = result.filter(p => (p.title || "").toLowerCase().includes(q) || (p.content || "").toLowerCase().includes(q) || (p.tags || []).some(t => t.toLowerCase().includes(q)));
     }
     if (currentFilter) {
-      if (currentFilterType === "category") result = result.filter(p => p.category === currentFilter);
+      if (currentFilterType === "category") result = result.filter(p => splitCategories(p.category).includes(currentFilter));
       else if (currentFilterType === "tag") result = result.filter(p => (p.tags || []).includes(currentFilter));
     }
     if (selectedDate) {
@@ -220,10 +365,11 @@ const BlogApp = (() => {
     sorted = filtered.slice().reverse();
     listEl.innerHTML = sorted.map((post) => {
       const tagsHtml = (post.tags || []).map(t => `<span class="post-tag" data-tag="${Shared.escapeHtml(t)}">${Shared.escapeHtml(t)}</span>`).join("");
+      const catsHtml = splitCategories(post.category).map(c => `<span class="post-category">${Shared.escapeHtml(c)}</span>`).join("");
       return `<article class="post-card glass card">
         <div class="post-card-top">
           <span class="post-date">📅 ${Shared.escapeHtml(post.date || "")}</span>
-          <span class="post-category">${Shared.escapeHtml(post.category || "其他")}</span>
+          ${catsHtml}
           <span class="post-reading">${post.wordCount || 0} 字 · ${post.readingTime || 1} 分钟</span>
         </div>
         <h3 class="post-card-title">${Shared.escapeHtml(post.title || "无标题")}</h3>
@@ -263,10 +409,11 @@ const BlogApp = (() => {
     const detail = $("#postDetail");
     if (!detail) return;
     const tagsHtml = (post.tags || []).map(t => `<span class="post-tag">${Shared.escapeHtml(t)}</span>`).join("");
+    const catsHtml = splitCategories(post.category).map(c => `<span class="post-category">${Shared.escapeHtml(c)}</span>`).join("");
     detail.innerHTML = `
       <div class="post-detail-head">
         <button class="back-btn" id="backToList">← 返回列表</button>
-        <span class="post-category">${Shared.escapeHtml(post.category || "其他")}</span>
+        ${catsHtml}
         <span class="post-reading">${post.wordCount || 0} 字 · ${post.readingTime || 1} 分钟阅读</span>
       </div>
       <h1 class="post-detail-title">${Shared.escapeHtml(post.title || "无标题")}</h1>
@@ -349,6 +496,91 @@ const BlogApp = (() => {
       });
     }
 
+    /* ---------- 草稿自动保存（本机 + 服务器，写到一半也不会丢） ---------- */
+    const postTitleEl = $("#postTitle");
+    const postCategoryEl = $("#postCategory");
+    const postTagsEl = $("#postTags");
+    const draftStatus = $("#draftStatus");
+    const DRAFT_LOCAL = "site_post_draft";
+    let draftTimer = null;
+    let lastServerPush = 0;
+
+    function nowStr() {
+      return new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    }
+    function collectDraft() {
+      return {
+        title: postTitleEl ? postTitleEl.value.trim() : "",
+        content: postContent ? postContent.value : "",
+        category: postCategoryEl ? postCategoryEl.value.trim() : "",
+        tags: postTagsEl ? postTagsEl.value.trim() : "",
+        updatedAt: Math.floor(Date.now() / 1000)
+      };
+    }
+    function draftEmpty(d) { return !d.title && !String(d.content || "").trim(); }
+    function setDraftStatus(text, warn) {
+      if (!draftStatus) return;
+      draftStatus.textContent = text;
+      draftStatus.style.color = warn ? "#e05353" : "";
+    }
+    function saveDraftLocal(d) {
+      try { localStorage.setItem(DRAFT_LOCAL, JSON.stringify(d)); } catch (e) {}
+    }
+    function clearDraftLocal() {
+      try { localStorage.removeItem(DRAFT_LOCAL); } catch (e) {}
+    }
+    async function flushDraft(force) {
+      if (!postContent) return;
+      const d = collectDraft();
+      if (draftEmpty(d)) return;
+      saveDraftLocal(d);
+      const t = Date.now();
+      // 服务器节流：最少间隔 6 秒推一版，避免每敲一个字就发请求
+      if (!force && t - lastServerPush < 6000) {
+        setDraftStatus("🕒 草稿已存本机 " + nowStr());
+        return;
+      }
+      lastServerPush = t;
+      setDraftStatus("☁️ 正在同步草稿…");
+      const seq = await ServerStore.pushDraft(d);
+      if (seq === -1) setDraftStatus("⚠️ 服务器同步失败，草稿已存本机 " + nowStr(), true);
+      else setDraftStatus("☁️ 草稿已保存到服务器 " + nowStr());
+    }
+    function scheduleDraft() {
+      clearTimeout(draftTimer);
+      draftTimer = setTimeout(() => flushDraft(false), 1200);
+    }
+    [postTitleEl, postContent, postCategoryEl, postTagsEl].forEach(el => {
+      if (el) on(el, "input", scheduleDraft);
+    });
+    // 关页/刷新前：强制把草稿写入本机，并让浏览器提示一次（防手滑）
+    window.addEventListener("beforeunload", e => {
+      const d = collectDraft();
+      if (draftEmpty(d)) return;
+      saveDraftLocal(d);
+      e.preventDefault();
+      e.returnValue = "";
+    });
+    // 进入编辑页时恢复服务器上的草稿（仅当编辑器是空的）
+    (async () => {
+      const d = await ServerStore.loadDraft();
+      if (!d) return;
+      if (!draftEmpty(collectDraft())) return;   // 已经在写了，不覆盖当前输入
+      if (postTitleEl && d.title) postTitleEl.value = d.title;
+      if (postContent && d.content) postContent.value = d.content;
+      if (postCategoryEl && d.category) postCategoryEl.value = d.category;
+      if (postTagsEl && d.tags) postTagsEl.value = d.tags;
+      if (charCount) charCount.textContent = Shared.countWords(postContent ? postContent.value : "") + " 字";
+      if (blogEditor) blogEditor.classList.add("show");
+      if (editorToggle) {
+        editorToggle.classList.add("open");
+        const arrow = editorToggle.querySelector(".toggle-arrow");
+        if (arrow) arrow.textContent = "▴";
+      }
+      const tt = d.updatedAt ? new Date(d.updatedAt * 1000).toLocaleString("zh-CN", { hour12: false }) : "";
+      setDraftStatus("☁️ 已恢复上次未发布的草稿" + (tt ? "（" + tt + "）" : ""));
+    })();
+
     if (postContent && charCount) {
       on(postContent, "input", () => {
         charCount.textContent = Shared.countWords(postContent.value) + " 字";
@@ -356,12 +588,12 @@ const BlogApp = (() => {
     }
 
     if (blogForm) {
-      on(blogForm, "submit", e => {
+      on(blogForm, "submit", async e => {
         e.preventDefault();
         const title = $("#postTitle").value.trim();
         const content = postContent.value.trim();
         const mood = "✨";
-        const category = $("#postCategory").value.trim() || "其他";
+        const category = categoryText($("#postCategory").value);   // 空格分隔的多个分类，统一成单空格
         const tagsRaw = $("#postTags").value.trim();
         const tags = tagsRaw ? tagsRaw.split("#").map(t => t.trim()).filter(Boolean) : [];
         if (!content) return;
@@ -373,7 +605,16 @@ const BlogApp = (() => {
           wordCount: wc,
           readingTime: Math.max(1, Math.ceil(wc / 300))
         });
-        savePosts(list);
+        setDraftStatus("☁️ 正在保存到服务器…");
+        const ok = await savePosts(list);
+        if (ok) {
+          clearTimeout(draftTimer);
+          clearDraftLocal();
+          ServerStore.clearDraft();
+          setDraftStatus("✅ 已发布并保存到服务器 " + nowStr());
+        } else {
+          setDraftStatus("⚠️ 已存本机，服务器同步失败，请重试发布", true);
+        }
         blogForm.reset();
         charCount.textContent = "0 字";
         currentFilter = null; currentFilterType = null; selectedDate = null; searchQuery = "";
@@ -394,12 +635,19 @@ const BlogApp = (() => {
     renderSidebar(loadPosts());
   }
 
+  // 仅重新渲染（服务器数据同步完成后调用，避免重复绑定事件）
+  function rerender() {
+    renderPosts(loadPosts());
+    renderFilterBar(loadPosts());
+    renderSidebar(loadPosts());
+  }
+
   function destroy() {
     cleanListeners();
     currentFilter = null; currentFilterType = null; searchQuery = ""; selectedDate = null;
   }
 
-  return { init, destroy };
+  return { init, destroy, rerender };
 })();
 
 
@@ -424,6 +672,7 @@ const LinksApp = (() => {
   }
   function saveLinks(list) {
     try { localStorage.setItem(LINK_KEY, JSON.stringify(list)); } catch (e) {}
+    ServerStore.pushAll(); // 同步到服务器
   }
 
   function renderLinks() {
@@ -505,14 +754,33 @@ const LinksApp = (() => {
     renderLinks();
   }
 
+  // 仅重新渲染（服务器数据同步完成后调用，避免重复绑定事件）
+  function rerender() {
+    renderLinks();
+  }
+
   function destroy() {
     cleanListeners();
   }
 
-  return { init, destroy };
+  return { init, destroy, rerender };
 })();
 
 
 /* ---------- 注册页面模块 ---------- */
 PJAX.registerPage("blog", BlogApp);
 PJAX.registerPage("links", LinksApp);
+
+/* ---------- 服务器数据同步完成后刷新当前页面 ---------- */
+// 解决首次访问：syncAll 异步拉取服务器数据，完成后若当前正显示博客/友链页则重渲染
+function refreshCurrentPage() {
+  const path = location.pathname;
+  if (path.endsWith("log.html") || path.endsWith("blog")) {
+    if (BlogApp && typeof BlogApp.rerender === "function") BlogApp.rerender();
+  } else if (path.endsWith("links.html") || path.endsWith("friends")) {
+    if (LinksApp && typeof LinksApp.rerender === "function") LinksApp.rerender();
+  }
+}
+ServerStore.onSync(refreshCurrentPage);
+// 兜底：若 sync 已完成（fetch 极快或已缓存），延迟再刷一次确保拿到服务器数据
+setTimeout(refreshCurrentPage, 600);

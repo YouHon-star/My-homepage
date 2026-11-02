@@ -25,7 +25,7 @@ const PJAX = (() => {
     links.forEach(a => {
       a.classList.remove("active");
       const href = a.getAttribute("href") || "";
-      if (pageName === "home" && (href === "#top" || href === "index.html" || href === "/")) {
+      if (pageName === "home" && (href === "#top" || href === "index.html" || href === "index.html#top" || href === "/")) {
         a.classList.add("active");
       } else if (pageName === "blog" && (href.includes("log.html") || href.includes("/blog"))) {
         a.classList.add("active");
@@ -74,6 +74,8 @@ const PJAX = (() => {
 
       if (mainContent) {
         main.innerHTML = mainContent.innerHTML;
+        // 同步容器 class（各页 <main> 类不同，如 blog-layout 的 padding-top 与首页不同）
+        main.className = mainContent.className || main.className;
       }
 
       document.title = title;
@@ -101,7 +103,10 @@ const PJAX = (() => {
       // 入场动画
       const targetUrl = new URL(url, location.href);
       const anchor = targetUrl.hash;
-      if (anchor) {
+      // #top = 主页开屏卡片，直接回到页面顶部（main padding-top 已让位导航）
+      if (anchor === "#top") {
+        window.scrollTo({ top: 0, behavior: "instant" });
+      } else if (anchor) {
         const target = document.getElementById(anchor.slice(1));
         if (target) {
           setTimeout(() => target.scrollIntoView({ behavior: "smooth" }), 50);
@@ -147,10 +152,15 @@ const PJAX = (() => {
         const currentPageName = getPageName(location.href);
         const hash = new URL(href, location.href).hash;
 
-        // 同页锚点（主页点 index.html#about）：平滑滚动，不整页刷新，保活 Live2D/音乐
+        // 同页锚点（主页点 index.html#about 等）：平滑滚动，不整页刷新，保活 Live2D/音乐
         if (targetPage === currentPageName && hash) {
-          const target = document.getElementById(hash.slice(1));
-          if (target) target.scrollIntoView({ behavior: "smooth" });
+          // #top = 主页开屏卡片：直接回页面顶部，开屏卡片完整露出（main padding 已让位导航）
+          if (hash === "#top") {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          } else {
+            const target = document.getElementById(hash.slice(1));
+            if (target) target.scrollIntoView({ behavior: "smooth" });
+          }
           return;
         }
 
